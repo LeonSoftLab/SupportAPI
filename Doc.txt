@@ -1,0 +1,11 @@
+# Запуск веб сервера:
+uvicorn main:app --reload
+
+# инициализация alembic
+alembic init migrations
+
+# Необходимые пакеты:
+pip install fastapi[all]
+pip install SQLAlchemy
+pip install alembic
+pip install pydantic
