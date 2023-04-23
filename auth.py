@@ -23,8 +23,8 @@ def verify_password(plain_password, hashed_password):
 
 # Функция получения пользователя из базы данных
 def get_user(username: str):
-    users = [{"id": 1, "username": "leon", "nickname": "Leonid", "password": "$2b$12$M9tSeWFEHh.cIawXpNhlp.AuJi82D5w4BYiED/Um3DfTNC4yr91zy"},
-             {"id": 2, "username": "qwerty", "nickname": "QQQ", "password": "$2b$12$MgzRp/BgsJ57swyDD9Jy0OpBtl0gPczEZkFQIZs0ZCISi1hvvDm.K"}]
+    users = [{"username": "leon", "idemployee": 1, "password": "$2b$12$M9tSeWFEHh.cIawXpNhlp.AuJi82D5w4BYiED/Um3DfTNC4yr91zy"},
+             {"username": "qwerty", "idemployee": 2, "password": "$2b$12$MgzRp/BgsJ57swyDD9Jy0OpBtl0gPczEZkFQIZs0ZCISi1hvvDm.K"}]
     for user in users:
         if user["username"] == username:
             return user

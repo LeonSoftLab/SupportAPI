@@ -23,27 +23,40 @@ class LoginRequestModel(BaseModel):
 users = Table(
     "users",
     metadata,
-    Column("id", Integer, Identity(start=1, increment=1), primary_key=True),
-    Column("name", String, nullable=False),
-    Column("tel", String, nullable=False),
-    Column("role", String, nullable=False),
-    Column("password", String, nullable=False),
+    Column("username", String(15), primary_key=True),
+    Column("idemployee", Integer, nullable=False),
+    Column("password", String(255), nullable=False),
 )
 
 
 class UserModel(BaseModel):
+    username: str
+    idemployee: int
+    password: str
+
+
+employees = Table(
+    "employees",
+    metadata,
+    Column("id", Integer, primary_key=True),
+    Column("fio", String(50), nullable=False),
+    Column("tel", String(15), nullable=False),
+    Column("role", String(15), nullable=False),
+)
+
+
+class EmployeeModel(BaseModel):
     id: int
-    name: str
+    fio: str
     tel: str
     role: str
-    password: str
 
 
 logevents = Table(
     "logevents",
     metadata,
     Column("id", Integer, Identity(start=1, increment=1), primary_key=True),
-    Column("iduser", Integer, nullable=False),
+    Column("idemployee", Integer, nullable=False),
     Column("chat_id", Integer, nullable=False),
     Column("datetimestamp", TIMESTAMP, default=datetime.utcnow),
     Column("event", String(255), nullable=False),
@@ -54,7 +67,7 @@ logevents = Table(
 
 class LogeventModel(BaseModel):
     id: int
-    iduser: int
+    idemployee: int
     chat_id: int
     datetimestamp: datetime
     event: str
@@ -121,7 +134,7 @@ Tasks = Table(
     "dh_tasks",
     metadata,
     Column("id", Integer, Identity(start=1, increment=1), primary_key=True),
-    Column("iduser", Integer, nullable=False),
+    Column("idemployee", Integer, nullable=False),
     Column("last_context", String(50), nullable=False),
     Column("message_text", String(255), nullable=False),
 )
@@ -129,6 +142,6 @@ Tasks = Table(
 
 class TaskModel(BaseModel):
     id: int
-    iduser: int
+    idemployee: int
     last_context: str
     message_text: str

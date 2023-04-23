@@ -47,7 +47,7 @@ class MssqlWorker:
             result.append(dict(zip(columns, row)))
         return result
 
-    def get_reports(self, user_id=-1, codename=None):
+    def get_reports(self, username="", codename=None):
         """ Получает из базы доступные отчёты """
         if codename is not None:
             rows = self.cursor.execute("SELECT * FROM [dbo].[reports] with(nolock) WHERE [codename]=?", (str(codename))).fetchone()
@@ -59,29 +59,40 @@ class MssqlWorker:
             result.append(dict(zip(columns, row)))
         return result
 
-    def get_dhtasks(self, user_id=-1):
+    def get_dhtasks(self, username=""):
         """ Получает из базы сообщения/задачи пользователя """
-        rows = self.cursor.execute("EXECUTE [dbo].[w_GetDhTasks] @iduser =?", (int(user_id))).fetchall()
+        rows = self.cursor.execute("SELECT dh.[id] "
+            "      ,dh.[idemployee] "
+            "	  ,e.[fio] + ' (' + e.[role] + ')' as [user] "
+            "      ,dh.[last_context] "
+            "      ,dh.[message_text] "
+            "  FROM [dbo].[dh_tasks] dh with(nolock) "
+            "    inner join [dbo].[employees] e with(nolock) on e.[id] = dh.[idemployee] "
+            "    inner join [dbo].[users] u with(nolock) on u.idemployee = e.[id] "
+            "  where u.username = ''",
+            (str(username))).fetchall()
         columns = [column[0] for column in self.cursor.description]
         result: list = []
         for row in rows:
             result.append(dict(zip(columns, row)))
         return result
 
-    def get_logevents(self, user_id=-1, start_date=datetime.now(), end_date=datetime.now()):
+    def get_logevents(self, username="", start_date=datetime.now(), end_date=datetime.now()):
         """ Получает из базы логи бота """
-        rows = self.cursor.execute("SELECT * FROM [dbo].[logevents] where [iduser] =? and [datetimestamp] between ? and ?",
-                                   (int(user_id), start_date, end_date)
-                                   ).fetchall()
+        rows = self.cursor.execute("SELECT lg.* "
+            "  FROM [dbo].[logevents] lg with(nolock) "
+            "    inner join [dbo].[users] u with(nolock) on u.[idemployee] = lg.[idemployee] "
+            "where u.[username] = ? and [datetimestamp] between ? and ?",
+            (str(username), start_date, end_date)).fetchall()
         columns = [column[0] for column in self.cursor.description]
         result: list = []
         for row in rows:
             result.append(dict(zip(columns, row)))
         return result
 
-    def get_user(self, tel):
+    def get_user(self, username=""):
         """ Получаем из базы сотрудников """
-        rows = self.cursor.execute("SELECT * FROM [dbo].[users] with(nolock) WHERE [tel]=? or '+'+[tel]=?", (tel, tel)).fetchone()
+        rows = self.cursor.execute("SELECT * FROM [dbo].[users] with(nolock) WHERE [username]=?", (str(username))).fetchone()
         columns = [column[0] for column in self.cursor.description]
         result: list = []
         for row in rows:
