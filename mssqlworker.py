@@ -69,7 +69,7 @@ class MssqlWorker:
             "  FROM [dbo].[dh_tasks] dh with(nolock) "
             "    inner join [dbo].[employees] e with(nolock) on e.[id] = dh.[idemployee] "
             "    inner join [dbo].[users] u with(nolock) on u.idemployee = e.[id] "
-            "  where u.username = ''",
+            "  where u.username = ?",
             (str(username))).fetchall()
         columns = [column[0] for column in self.cursor.description]
         result: list = []

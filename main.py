@@ -1,8 +1,10 @@
-from fastapi import FastAPI, Depends, HTTPException
+from fastapi import FastAPI, Depends, HTTPException, Request
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi import APIRouter
 from typing import List
 from datetime import datetime, timedelta
+from fastapi.middleware.cors import CORSMiddleware
+from pyodbc import OperationalError
 import jwt
 import config
 import mssqlworker
@@ -13,15 +15,57 @@ app = FastAPI(
     title="Support App"
 )
 
+# Настройка CORS
+origins = ["*"]
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 # Создаём обьект для работы с базой данных
-db = mssqlworker.MssqlWorker()
+try:
+    db = mssqlworker.MssqlWorker()
+except OperationalError as err:
+    print("Database connection error: \n", err)
+except Exception as err:
+    print(f"Unexpected {err=}, {type(err)=}")
+    raise
 
 # Создаем объект для работы с HTTP-заголовками авторизации
 bearer_scheme = HTTPBearer()
 
 @app.get("/")
 def get_hello():
-    return "Hello world!"
+    return "Hi user! Welcome to the Support App server! The swagger with the APi documentation is at /docs"
+
+
+@app.get("/testdata")
+def get_testdata():
+    _data = [
+  {
+    "id": 1,
+    "createDate": "2023-05-01T08:15:50.000Z",
+    "name": "Тикет 1",
+    "status": "Закрыт"
+  },
+  {
+    "id": 2,
+    "createDate": "2023-05-15T12:10:35.000Z",
+    "name": "Тикет 2",
+    "status": "В работе"
+  },
+  {
+    "id": 3,
+    "createDate": "2023-05-25T15:05:25.000Z",
+    "name": "Тикет 3",
+    "status": "Открыт"
+  }
+]
+    return _data
 
 
 # Аутентификация пользователя

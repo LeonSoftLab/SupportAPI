@@ -1,11 +1,8 @@
-# Запуск веб сервера:
+# Г‡Г ГЇГіГ±ГЄ ГўГҐГЎ Г±ГҐГ°ГўГҐГ°Г :
 uvicorn main:app --reload
 
-# инициализация alembic
+# ГЁГ­ГЁГ¶ГЁГ Г«ГЁГ§Г Г¶ГЁГї alembic
 alembic init migrations
 
-# Необходимые пакеты:
-pip install fastapi[all]
-pip install SQLAlchemy
-pip install alembic
-pip install pydantic
+# ГЌГҐГ®ГЎГµГ®Г¤ГЁГ¬Г»ГҐ ГЇГ ГЄГҐГІГ»:
+pip install fastapi[all] SQLAlchemy alembic pydantic PyJWT pyodbc passlib bcrypt
