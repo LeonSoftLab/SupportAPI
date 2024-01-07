@@ -1,11 +1,15 @@
 import pyodbc
 from datetime import datetime
-from config import CONNECT_STRING
+from config import Config
 
+fakeusers = [
+    {"username": "leon", "idemployee": 1, "password": "$2b$12$M9tSeWFEHh.cIawXpNhlp.AuJi82D5w4BYiED/Um3DfTNC4yr91zy"},
+    {"username": "qwerty", "idemployee": 2, "password": "$2b$12$MgzRp/BgsJ57swyDD9Jy0OpBtl0gPczEZkFQIZs0ZCISi1hvvDm.K"}
+]
 
 class MssqlWorker:
     def __init__(self):
-        self.connection = pyodbc.connect(CONNECT_STRING, autocommit=True)
+        self.connection = pyodbc.connect(Config.CONNECT_STRING, autocommit=True)
         self.cursor = self.connection.cursor()
 
     def get_groups(self, codename=None):
@@ -134,7 +138,7 @@ class MssqlWorker:
         self.connection.close()
 
 if __name__ == '__main__':
-    db = MssqlWorker(CONNECT_STRING)
+    db = MssqlWorker(Config.CONNECT_STRING)
     tasks = db.get_dhtasks(user_id=-1)
     result = tasks is not None
     if result:

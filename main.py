@@ -1,12 +1,13 @@
-from fastapi import FastAPI, Depends, HTTPException, Request
-from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from typing import Annotated
+
+from fastapi import FastAPI, Depends, HTTPException, status
+from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from fastapi import APIRouter
-from typing import List
 from datetime import datetime, timedelta
 from fastapi.middleware.cors import CORSMiddleware
 from pyodbc import OperationalError
 import jwt
-import config
+from config import Config
 import mssqlworker
 import models
 import auth
@@ -16,7 +17,11 @@ app = FastAPI(
 )
 
 # Настройка CORS
-origins = ["*"]
+
+#origins = ["*"]
+origins = [
+    "http://localhost:8080",  # Разрешить CORS для этого источника
+]
 
 app.add_middleware(
     CORSMiddleware,
@@ -26,58 +31,95 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Создаём обьект для работы с базой данных
-try:
-    db = mssqlworker.MssqlWorker()
-except OperationalError as err:
-    print("Database connection error: \n", err)
-except Exception as err:
-    print(f"Unexpected {err=}, {type(err)=}")
-    raise
+db = None
 
 # Создаем объект для работы с HTTP-заголовками авторизации
-bearer_scheme = HTTPBearer()
+oauth2_schema = OAuth2PasswordBearer(tokenUrl="login")
+
+async def get_current_user(token: Annotated[str, Depends(oauth2_schema)]):
+    credentials_exception = HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Could not validate credentials",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+    try:
+        payload = jwt.decode(token, Config.JWT_SECRET_KEY, algorithms=[Config.JWT_ALGORITHM])
+        username: str = payload.get("sub")
+        if username is None:
+            raise credentials_exception
+        token_data = models.TokenDataModel(username=username)
+    except Exception as e:
+        raise credentials_exception
+    user = auth.get_user(mssqlworker.fakeusers, username=token_data.username)
+    if not user:
+        raise credentials_exception
+    return user
+
+
+async def get_current_active_user(
+    current_user: Annotated[models.UserModel, Depends(get_current_user)]
+):
+    if current_user.disabled:
+        raise HTTPException(status_code=400, detail="Inactive user")
+    return current_user
+
+
+@app.on_event("startup")
+def startup():
+    global db
+    try:
+        # Создаём обьект для работы с базой данных
+        db = mssqlworker.MssqlWorker()
+    except OperationalError as err:
+        print("Database connection error: \n", err)
+        raise
+    except Exception as err:
+        print(f"Unexpected {err=}, {type(err)=}")
+        raise
+
 
 @app.get("/")
 def get_hello():
-    return "Hi user! Welcome to the Support App server! The swagger with the APi documentation is at /docs"
+    return 'Hi user! Welcome to the Support App server! The swagger with the APi documentation is at "/docs"'
 
 
 @app.get("/testdata")
 def get_testdata():
     _data = [
-  {
-    "id": 1,
-    "createDate": "2023-05-01T08:15:50.000Z",
-    "name": "Тикет 1",
-    "status": "Закрыт"
-  },
-  {
-    "id": 2,
-    "createDate": "2023-05-15T12:10:35.000Z",
-    "name": "Тикет 2",
-    "status": "В работе"
-  },
-  {
-    "id": 3,
-    "createDate": "2023-05-25T15:05:25.000Z",
-    "name": "Тикет 3",
-    "status": "Открыт"
-  }
-]
+        {
+            "id": 1,
+            "createDate": "2023-05-01T08:15:50.000",
+            "name": "Тикет 1",
+            "status": "Закрыт"
+        },
+        {
+            "id": 2,
+            "createDate": "2023-05-15T12:10:35.000",
+            "name": "Тикет 2",
+            "status": "В работе"
+        },
+        {
+            "id": 3,
+            "createDate": "2023-05-25T15:05:25.000",
+            "name": "Тикет 3",
+            "status": "Открыт"
+        }
+    ]
     return _data
 
 
 # Аутентификация пользователя
 @app.post("/login")
-def login(login_request: models.LoginRequestModel):
-    user = auth.authenticate_user(login_request.username, login_request.password)
+async def login_for_access_token(form_data: Annotated[OAuth2PasswordRequestForm, Depends()]):
+    user = auth.authenticate_user(mssqlworker.fakeusers, form_data.username, form_data.password)
     if not user:
-        raise HTTPException(status_code=401, detail="Invalid username or password")
-    token_data = models.TokenDataModel(username=user["username"], exp=datetime.utcnow() + timedelta(minutes=config.JWT_EXPIRATION_TIME_MINUTES))
-    access_token = auth.create_jwt_token(token_data)
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Incorrect username or password",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    access_token = auth.create_access_token(data={"sub": user.username})
     return {"access_token": access_token, "token_type": "bearer"}
-
 
 # Reports
 router_reports = APIRouter(
@@ -86,33 +128,40 @@ router_reports = APIRouter(
 )
 
 
-@router_reports.get("/{report_code}", response_model=List[models.ReportModel])
-def get_report(token: HTTPAuthorizationCredentials = Depends(bearer_scheme), report_code: str = ""):
-    username = check_auth(token)
-    if username is not None:
-        reports = db.get_reports(codename=report_code)
-        return [report for report in reports]
+@router_reports.get("/", response_model=list[models.ReportModel])
+async def get_reports(current_user: Annotated[models.UserModel, Depends(get_current_active_user)]):
+    reports = db.get_reports(username=current_user.username)
+    return [report for report in reports]
 
 
-@router_reports.post("/{report_code}")
-def change_report_name(report_code: str, new_name: str):
-    current_report = db.get_reports(codename=report_code)[0]
-    current_report["name"] = new_name
+@router_reports.post("/")
+def add_reports(current_user: Annotated[models.UserModel, Depends(get_current_active_user)],
+                reports: list[models.ReportModel]):
+    return {"status": 200, "data": reports}
+
+
+@router_reports.get("/{report_code}", response_model=models.ReportModel)
+async def get_report(current_user: Annotated[models.UserModel, Depends(get_current_active_user)],
+                     report_code: str):
+    reports = db.get_reports(username=current_user.username, codename=report_code)
+    return [report for report in reports]
+
+
+@router_reports.put("/{report_code}", response_model=models.ReportModel)
+async def change_report(current_user: Annotated[models.UserModel, Depends(get_current_active_user)],
+                        report_code: str,
+                        report: models.ReportModel):
+    current_report = db.get_reports(username=current_user.username, codename=report_code)[0]
+    # TODO: update to db report
     return {"status": 200, "data": current_report}
 
 
-@router_reports.get("/", response_model=List[models.ReportModel])
-def get_reports(token: HTTPAuthorizationCredentials = Depends(bearer_scheme)):
-    username = check_auth(token)
-    if username is not None:
-        reports = db.get_reports()
-        return [report for report in reports]
-
-
-@router_reports.post("/reports")
-def add_reports(reports: List[models.ReportModel]):
-    return {"status": 200, "data": reports}
-
+@router_reports.delete("/{report_code}", response_model=models.ReportModel)
+async def delete_report(current_user: Annotated[models.UserModel, Depends(get_current_active_user)],
+                        report_code: str):
+    current_report = db.get_reports(username=current_user.username, codename=report_code)[0]
+    # TODO: delete
+    return {"status": 200, "data": current_report}
 
 # Groups
 router_groups = APIRouter(
@@ -121,25 +170,43 @@ router_groups = APIRouter(
 )
 
 
-@router_groups.get("/{group_code}", response_model=List[models.GroupModel])
-def get_group(token: HTTPAuthorizationCredentials = Depends(bearer_scheme), group_code: str = ""):
-    username = check_auth(token)
-    if username is not None:
-        groups = db.get_groups(codename=group_code)
-        return [group for group in groups]
+@router_groups.get("/", response_model=list[models.GroupModel])
+def get_groups(current_user: Annotated[models.UserModel, Depends(get_current_active_user)]):
+    groups = db.get_groups()
+    return [group for group in groups]
 
 
-@router_groups.get("/", response_model=List[models.GroupModel])
-def get_groups(token: HTTPAuthorizationCredentials = Depends(bearer_scheme)):
-    username = check_auth(token)
-    if username is not None:
-        groups = db.get_groups()
-        return [group for group in groups]
-
-
-@router_groups.post("/")
-def add_groups(groups: List[models.GroupModel]):
+@router_groups.post("/", response_model=list[models.GroupModel])
+def add_groups(current_user: Annotated[models.UserModel, Depends(get_current_active_user)],
+               groups: list[models.GroupModel]):
+    # TODO: add new groups
     return {"status": 200, "data": groups}
+
+
+@router_groups.get("/{group_id}", response_model=models.GroupModel)
+def get_group(current_user: Annotated[models.UserModel, Depends(get_current_active_user)],
+              group_id: int):
+    groups = db.get_groups()
+    return [group for group in groups if group[0] == group_id]
+
+
+@router_groups.put("/{group_id}", response_model=models.GroupModel)
+def change_group(current_user: Annotated[models.UserModel, Depends(get_current_active_user)],
+                 group_id: int,
+                 group: models.GroupModel):
+    groups = db.get_groups()
+    group_curr = [group for group in groups if group[0] == group_id]
+    # TODO: update to db group
+    return group_curr
+
+
+@router_groups.delete("/{group_id}", response_model=models.GroupModel)
+def delete_group(current_user: Annotated[models.UserModel, Depends(get_current_active_user)],
+                 group_id: int):
+    groups = db.get_groups()
+    group_curr = [group for group in groups if group[0] == group_id]
+    # TODO: delete
+    return group_curr
 
 
 # Grouprows
@@ -149,26 +216,34 @@ router_grouprows = APIRouter(
 )
 
 
-@router_grouprows.get("/{group_id}", response_model=List[models.GrouprowModel])
-def get_grouprows_by_group(token: HTTPAuthorizationCredentials = Depends(bearer_scheme), group_id: int = -1):
-    username = check_auth(token)
-    if username is not None:
-        grouprows = db.get_grouprows(idgroup=group_id)
-        return [grouprow for grouprow in grouprows]
+@router_grouprows.get("/", response_model=list[models.GrouprowModel])
+def get_grouprows(current_user: Annotated[models.UserModel, Depends(get_current_active_user)],
+                  idgroup: int):
+    grouprows = db.get_grouprows(idgroup=idgroup)
+    return [grouprow for grouprow in grouprows]
 
 
-@router_grouprows.get("/", response_model=List[models.GrouprowModel])
-def get_grouprows_by_code(token: HTTPAuthorizationCredentials = Depends(bearer_scheme),
-                          codename: str = ""):
-    username = check_auth(token)
-    if username is not None:
-        grouprows = db.get_grouprows_by_split_codename(codename=codename)
-        return [grouprow for grouprow in grouprows]
+@router_grouprows.post("/", response_model=list[models.GrouprowModel])
+def add_grouprows(current_user: Annotated[models.UserModel, Depends(get_current_active_user)],
+                  idgroup: int,
+                  grouprows: list[models.GrouprowModel]):
+    # TODO: add to db
+    return {"status": 200, "data": grouprows}
 
 
-@router_grouprows.post("/")
-def add_groups(groups: List[models.GroupModel]):
-    return {"status": 200, "data": groups}
+@router_grouprows.put("/{grouprow_id}", response_model=models.GrouprowModel)
+def change_grouprow(current_user: Annotated[models.UserModel, Depends(get_current_active_user)],
+                    grouprow_id: int,
+                    grouprow: models.GrouprowModel):
+    # TODO update in db
+    return {"status": 200, "data": grouprow}
+
+
+@router_grouprows.delete("/{grouprow_id}", response_model=models.GrouprowModel)
+def delete_grouprow(current_user: Annotated[models.UserModel, Depends(get_current_active_user)],
+                    grouprow_id: int):
+    # TODO: delete to db
+    return {"status": 200, "data": grouprow_id}
 
 
 # Tasks
@@ -178,21 +253,19 @@ router_tasks = APIRouter(
 )
 
 
-@router_tasks.get("/", response_model=List[models.TaskModel])
-def get_tasks(token: HTTPAuthorizationCredentials = Depends(bearer_scheme), limit: int = 1, offset: int = 0):
-    username = check_auth(token)
-    if username is not None:
-        tasks = db.get_dhtasks(username)
-        return [task for task in tasks[offset:][:limit]]
+@router_tasks.get("/", response_model=list[models.TaskModel])
+def get_tasks(current_user: Annotated[models.UserModel, Depends(get_current_active_user)],
+              limit: int = 1, offset: int = 0
+              ):
+    tasks = db.get_dhtasks(current_user.username)
+    return [task for task in tasks[offset:][:limit]]
 
 
-@router_tasks.get("/{task_id}", response_model=List[models.TaskModel])
-def get_task(token: HTTPAuthorizationCredentials = Depends(bearer_scheme), task_id: int = 0):
-    username = check_auth(token)
-    current_task = None
-    if username is not None:
-        tasks = db.get_dhtasks(username)
-        current_task = list(filter(lambda task: task.get("id") == task_id, tasks))[0]
+@router_tasks.get("/{task_id}", response_model=models.TaskModel)
+def get_task(current_user: Annotated[models.UserModel, Depends(get_current_active_user)],
+             task_id: int):
+    tasks = db.get_dhtasks(current_user.username)
+    current_task = list(filter(lambda task: task.get("id") == task_id, tasks))[0]
     return current_task
 
 
@@ -203,30 +276,14 @@ router_logevents = APIRouter(
 )
 
 
-@router_logevents.get("/", response_model=List[models.LogeventModel])
-def get_logevents(token: HTTPAuthorizationCredentials = Depends(bearer_scheme),
+@router_logevents.get("/", response_model=list[models.LogeventModel])
+def get_logevents(current_user: Annotated[models.UserModel, Depends(get_current_active_user)],
                   limit: int = 1, offset: int = 0,
                   startdate: datetime = datetime.now(),
                   enddate: datetime = datetime.now()
                   ):
-    username = check_auth(token)
-    if username is not None:
-        logevents = db.get_logevents(username, start_date=startdate, end_date=enddate)
-        return [logevent for logevent in logevents[offset:][:limit]]
-
-
-def check_auth(token):
-    try:
-        payload = jwt.decode(token.credentials, config.JWT_SECRET_KEY, algorithms=[config.JWT_ALGORITHM])
-        username: str = payload.get("username")
-        if username is None:
-            raise HTTPException(status_code=401, detail="Invalid authentication credentials")
-        token_data = models.TokenDataModel(username=username, exp=datetime.fromtimestamp(payload.get("exp")))
-        if datetime.utcnow() >= token_data.exp:
-            raise HTTPException(status_code=401, detail="Token has expired")
-    except (jwt.InvalidTokenError, Exception):
-        raise HTTPException(status_code=401, detail="Invalid authentication credentials")
-    return username
+    logevents = db.get_logevents(current_user.username, start_date=startdate, end_date=enddate)
+    return [logevent for logevent in logevents[offset:][:limit]]
 
 
 app.include_router(router_reports)
